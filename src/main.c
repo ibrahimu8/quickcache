@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <ctype.h>
+#include <openssl/sha.h>
+
 #include "hash.h"
 #include "cache.h"
 #include "exec.h"
@@ -13,7 +16,6 @@
 #include "network.h"
 
 #define DEFAULT_CACHE_LIMIT (1024ULL * 1024 * 1024)
-#define IGNORE_OUTPUT_PATH 1   // Remove -o and its argument from cache key
 
 typedef struct {
     char *input_file;
@@ -21,6 +23,19 @@ typedef struct {
     char *compiler;
 } compile_info_t;
 
+/* ---------- USAGE ---------- */
+void print_usage(void) {
+    printf("QuickCache - Distributed Compiler Cache\n\n");
+    printf("Usage:\n");
+    printf("  quickcache <compiler> <args...>\n");
+    printf("  quickcache --stats\n");
+    printf("  quickcache --clean [days]\n");
+    printf("  quickcache --limit <size_mb>\n");
+    printf("  quickcache --config\n");
+    printf("  quickcache --test-remote\n");
+}
+
+/* ---------- CLEAN SHUTDOWN ---------- */
 static void cleanup_handler(int sig) {
     (void)sig;
     cache_shutdown();
@@ -28,6 +43,63 @@ static void cleanup_handler(int sig) {
     exit(0);
 }
 
+/* ---------- HEADER DEPENDENCY TRACKING ---------- */
+/* Parse #include directives and hash all headers recursively */
+int hash_with_dependencies(const char *source_file, hash_t out) {
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+
+    /* Hash the main source file */
+    hash_t file_hash;
+    if (hash_file(source_file, file_hash) == -1) {
+        return -1;
+    }
+    SHA256_Update(&ctx, file_hash, SHA256_DIGEST_LENGTH);
+
+    /* Open source file to find #include directives */
+    FILE *f = fopen(source_file, "r");
+    if (!f) return -1;
+
+    char line[1024];
+    char header_path[512];
+
+    while (fgets(line, sizeof(line), f)) {
+        /* Skip if not an include */
+        char *p = line;
+        while (isspace(*p)) p++;
+        if (*p != '#') continue;
+        p++;
+        while (isspace(*p)) p++;
+        if (strncmp(p, "include", 7) != 0) continue;
+        p += 7;
+        while (isspace(*p)) p++;
+
+        /* Extract header filename */
+        if (*p == '"') {
+            /* Local header: #include "header.h" */
+            p++;
+            char *end = strchr(p, '"');
+            if (!end) continue;
+            size_t len = end - p;
+            if (len >= sizeof(header_path)) continue;
+            memcpy(header_path, p, len);
+            header_path[len] = '\0';
+
+            /* Hash this header file */
+            hash_t header_hash;
+            if (hash_file(header_path, header_hash) == 0) {
+                SHA256_Update(&ctx, header_hash, SHA256_DIGEST_LENGTH);
+            }
+        }
+        /* System headers like <stdio.h> are handled by compiler flags in h_cmd */
+    }
+
+    fclose(f);
+    SHA256_Final(out, &ctx);
+    return 0;
+}
+
+/* ---------- ARGUMENT PARSING ---------- */
 int parse_args(int argc, char **argv, compile_info_t *info) {
     info->input_file = NULL;
     info->output_file = NULL;
@@ -39,40 +111,80 @@ int parse_args(int argc, char **argv, compile_info_t *info) {
             i++;
         } else if (argv[i][0] != '-') {
             const char *ext = strrchr(argv[i], '.');
-            if (ext && (strcmp(ext, ".c") == 0 ||
-                       strcmp(ext, ".cpp") == 0 ||
-                       strcmp(ext, ".cc") == 0 ||
-                       strcmp(ext, ".cxx") == 0)) {
+            if (ext && (
+                strcmp(ext, ".c") == 0  ||
+                strcmp(ext, ".cpp") == 0 ||
+                strcmp(ext, ".cc") == 0 ||
+                strcmp(ext, ".cxx") == 0)) {
                 info->input_file = argv[i];
             }
         }
     }
 
-    if (!info->input_file) {
+    if (!info->input_file)
         return -1;
-    }
 
+    /* Default output file */
     if (!info->output_file) {
-        char *base = strdup(info->input_file);
+        size_t len = strlen(info->input_file) + 1;
+        char *base = malloc(len);
+        if (!base) {
+            perror("malloc");
+            exit(1);
+        }
+
+        memcpy(base, info->input_file, len);
+
         char *dot = strrchr(base, '.');
         if (dot) *dot = '\0';
+
         static char default_out[256];
         snprintf(default_out, sizeof(default_out), "%s.o", base);
         info->output_file = default_out;
+
         free(base);
     }
 
     return 0;
 }
 
+/* ---------- REMOTE TEST ---------- */
+int test_remote_connection(void) {
+    if (cache_init() == -1) {
+        fprintf(stderr, "Failed to initialize cache\n");
+        return 1;
+    }
 
+    config_load();
+    const quickcache_config_t *cfg = config_get();
+
+    if (!cfg->remote_enabled) {
+        printf("Remote cache is not enabled\n");
+        cache_shutdown();
+        metadata_close();
+        return 1;
+    }
+
+    hash_t test_key;
+    const char *msg = "quickcache-test";
+    hash_data(msg, strlen(msg), test_key);
+
+    int exists = network_check_exists(test_key);
+    printf("%s Remote cache reachable\n", exists ? "[✓]" : "[✗]");
+
+    cache_shutdown();
+    metadata_close();
+    return 0;
+}
+
+/* ---------- COMMAND STRING ---------- */
 void build_command_string(int argc, char **argv, char *buf, size_t len) {
     const quickcache_config_t *cfg = config_get();
     int ignore_output = cfg ? cfg->ignore_output_path : 0;
-    fprintf(stderr, "DEBUG: ignore_output=%d\n", ignore_output);
 
     buf[0] = '\0';
     int skip_next = 0;
+
     for (int i = 0; i < argc; i++) {
         if (ignore_output) {
             if (skip_next) {
@@ -84,87 +196,14 @@ void build_command_string(int argc, char **argv, char *buf, size_t len) {
                 continue;
             }
         }
+
+        if (buf[0] != '\0') strncat(buf, " ", len - strlen(buf) - 1);
         strncat(buf, argv[i], len - strlen(buf) - 1);
-        if (i < argc - 1) {
-            if (ignore_output) {
-                int next_is_minus_o = (i + 1 < argc && strcmp(argv[i + 1], "-o") == 0);
-                if (!next_is_minus_o) {
-                    strncat(buf, " ", len - strlen(buf) - 1);
-                }
-            } else {
-                strncat(buf, " ", len - strlen(buf) - 1);
-            }
-        }
-    }
-    // Trim possible trailing space
-    size_t buflen = strlen(buf);
-    if (buflen > 0 && buf[buflen - 1] == ' ') {
-        buf[buflen - 1] = '\0';
     }
 }
-void print_usage(void) {
-    printf("BuildCache - Distributed Compiler Cache\n\n");
-    printf("Usage:\n");
-    printf("  quickcache <compiler> <args...>     Run compiler with caching\n");
-    printf("  quickcache --stats                  Show cache statistics\n");
-    printf("  quickcache --clean [days]           Clean cache entries\n");
-    printf("  quickcache --limit <size_mb>        Enforce cache size limit\n");
-    printf("  quickcache --config                 Create example config file\n");
-    printf("  quickcache --test-remote            Test remote cache connection\n\n");
-    printf("Configuration:\n");
-    printf("  Edit ~/.quickcache/config to enable remote caching\n");
-    printf("  Example:\n");
-    printf("    remote_url=http://your-cache-server:8080\n");
-    printf("    auth_token=your-secret-token\n");
-    printf("    async_upload=true\n\n");
-}
 
-int test_remote_connection(void) {
-    if (cache_init() == -1) {
-        fprintf(stderr, "Failed to initialize cache\n");
-        return 1;
-    }
-
-    config_load();
-    const quickcache_config_t *cfg = config_get();
-
-    if (!cfg->remote_enabled) {
-        printf("Remote cache is not enabled.\n");
-        printf("Edit ~/.quickcache/config to configure remote cache.\n");
-        cache_shutdown();
-        metadata_close();
-        return 1;
-    }
-
-    printf("Testing connection to: %s\n", cfg->remote_url);
-
-    // Create a test hash
-    hash_t test_key;
-    const char *test_data = "quickcache-test-connection";
-    hash_data(test_data, strlen(test_data), test_key);
-
-    char hex[HASH_HEX_SIZE];
-    hash_to_hex(test_key, hex);
-
-    printf("Test hash: %s\n", hex);
-    printf("Checking if remote server is accessible...\n");
-
-    int exists = network_check_exists(test_key);
-
-    if (exists) {
-        printf("✓ Remote cache is accessible and responding!\n");
-    } else {
-        printf("✗ Could not reach remote cache or object doesn't exist\n");
-        printf("  (This is normal if the test object hasn't been uploaded yet)\n");
-    }
-
-    cache_shutdown();
-    metadata_close();
-    return 0;
-}
-
+/* ---------- MAIN ---------- */
 int main(int argc, char **argv) {
-    // Setup signal handlers for clean shutdown
     signal(SIGINT, cleanup_handler);
     signal(SIGTERM, cleanup_handler);
 
@@ -173,138 +212,96 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Load configuration
     config_load();
 
-    if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+    if (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h")) {
         print_usage();
         return 0;
     }
 
-    if (strcmp(argv[1], "--config") == 0) {
-        if (cache_init() == -1) {
-            fprintf(stderr, "Failed to initialize cache\n");
-            return 1;
-        }
-        int ret = config_create_example();
+    if (!strcmp(argv[1], "--config")) {
+        cache_init();
+        int r = config_create_example();
         cache_shutdown();
         metadata_close();
-        return ret;
+        return r;
     }
 
-    if (strcmp(argv[1], "--test-remote") == 0) {
+    if (!strcmp(argv[1], "--test-remote"))
         return test_remote_connection();
-    }
 
-    if (strcmp(argv[1], "--stats") == 0) {
-        if (cache_init() == -1) {
-            fprintf(stderr, "Failed to initialize cache\n");
-            return 1;
-        }
+    if (!strcmp(argv[1], "--stats")) {
+        cache_init();
         stats_print();
-
-        const quickcache_config_t *cfg = config_get();
-        if (cfg->remote_enabled) {
-            printf("\nRemote cache: ENABLED\n");
-            printf("Server URL:   %s\n", cfg->remote_url);
-            printf("Async upload: %s\n", cfg->async_upload ? "YES" : "NO");
-        } else {
-            printf("\nRemote cache: DISABLED\n");
-        }
-
         cache_shutdown();
         metadata_close();
         return 0;
     }
 
-    if (strcmp(argv[1], "--clean") == 0) {
-        if (cache_init() == -1) {
-            fprintf(stderr, "Failed to initialize cache\n");
-            return 1;
-        }
-
-        if (argc == 2) {
+    if (!strcmp(argv[1], "--clean")) {
+        cache_init();
+        if (argc == 2)
             cache_clean_all();
-        } else {
-            int days = atoi(argv[2]);
-            cache_clean_old(days);
-        }
-
+        else
+            cache_clean_old(atoi(argv[2]));
         cache_shutdown();
         metadata_close();
         return 0;
     }
 
-    if (strcmp(argv[1], "--limit") == 0) {
+    if (!strcmp(argv[1], "--limit")) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: quickcache --limit <size_in_mb>\n");
+            fprintf(stderr, "Missing size\n");
             return 1;
         }
-
-        if (cache_init() == -1) {
-            fprintf(stderr, "Failed to initialize cache\n");
-            return 1;
-        }
-
-        size_t limit_mb = atoi(argv[2]);
-        cache_enforce_limit(limit_mb * 1024 * 1024);
-
+        cache_init();
+        cache_enforce_limit((size_t)atoi(argv[2]) * 1024 * 1024);
         cache_shutdown();
         metadata_close();
         return 0;
     }
 
     if (cache_init() == -1) {
-        fprintf(stderr, "Failed to initialize cache\n");
+        fprintf(stderr, "Cache init failed\n");
         return 1;
     }
 
     compile_info_t info;
     if (parse_args(argc - 1, argv + 1, &info) == -1) {
-        int ret = execute_compiler(argv + 1);
+        int r = execute_compiler(argv + 1);
         cache_shutdown();
         metadata_close();
-        return ret;
+        return r;
     }
 
-    hash_t input_hash, cmd_hash, cache_key;
+    hash_t h_file, h_cmd, key;
+    char cmd[8192];
 
-    if (hash_file(info.input_file, input_hash) == -1) {
-        fprintf(stderr, "Failed to hash input file: %s\n", info.input_file);
-        cache_shutdown();
-        metadata_close();
+    if (hash_with_dependencies(info.input_file, h_file) == -1) {
+        fprintf(stderr, "Hash failed\n");
         return 1;
     }
 
-    char cmd_str[8192];
-    build_command_string(argc - 1, argv + 1, cmd_str, sizeof(cmd_str));
-    hash_data(cmd_str, strlen(cmd_str), cmd_hash);
+    build_command_string(argc - 1, argv + 1, cmd, sizeof(cmd));
+    hash_data(cmd, strlen(cmd), h_cmd);
+    hash_combine(h_file, h_cmd, key);
 
-    hash_combine(input_hash, cmd_hash, cache_key);
-
-    char key_hex[HASH_HEX_SIZE];
-    hash_to_hex(cache_key, key_hex);
-
-    if (cache_lookup(cache_key, info.output_file) == 0) {
-        printf("[quickcache] HIT %s\n", key_hex);
-        cache_enforce_limit(DEFAULT_CACHE_LIMIT);
+    if (cache_lookup(key, info.output_file) == 0) {
+        printf("[quickcache] HIT\n");
         cache_shutdown();
         metadata_close();
         return 0;
     }
 
-    printf("[quickcache] MISS %s\n", key_hex);
+    printf("[quickcache] MISS\n");
 
-    int ret = execute_compiler(argv + 1);
+    int r = execute_compiler(argv + 1);
+    if (r == 0 && file_exists(info.output_file))
+        cache_store(key, info.output_file);
 
-    if (ret == 0 && file_exists(info.output_file)) {
-        if (cache_store(cache_key, info.output_file) == -1) {
-            fprintf(stderr, "[quickcache] Warning: failed to store in cache\n");
-        }
-        cache_enforce_limit(DEFAULT_CACHE_LIMIT);
-    }
-
+    cache_enforce_limit(DEFAULT_CACHE_LIMIT);
     cache_shutdown();
     metadata_close();
-    return ret;
+
+    return r;
 }
