@@ -2,8 +2,6 @@ QuickCache
 
 A lightweight, distributed compiler cache written in 1,567 lines of C.
 
-Built entirely on a phone using Termux.
-
  Why QuickCache?
 
 - 9x faster rebuilds (187ms to 20ms)
