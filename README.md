@@ -1,163 +1,122 @@
+# QuickCache - Distributed Compiler Cache
 
-# QuickCache
+QuickCache is a distributed compiler cache designed to speed up repeated builds by caching compiled objects locally and remotely.  
 
-**QuickCache** is a **lightweight, distributed compiler cache** designed to accelerate rebuilds, reduce redundant compilation, and support remote caching. It’s written in pure C (~1,567 lines) and is optimized for speed, simplicity, and minimal dependencies.
-
----
-
-## Why QuickCache Matters
-
-- **Faster rebuilds**: Avoid recompiling unchanged files. Local cache hits can reduce compile times from hundreds of milliseconds to just a few.
-- **Distributed caching**: Share compiled objects across your team or CI/CD servers.
-- **Small footprint**: Tiny binary (~116KB) and minimal runtime dependencies.
-- **Offline-capable**: Works without network access, while optionally supporting remote caches.
-- **Flexible and configurable**: Supports async uploads, configurable timeouts, and selective output ignoring.
-- **Safe defaults**: Minimal setup required; fully usable with just a default config.
+Think of it like `ccache`, but with remote caching capabilities.
 
 ---
 
 ## Features
 
-- **Local caching**: Reuses previously compiled objects.
-- **Remote caching**: Upload and fetch from a remote cache server.
-- **Async upload**: Optionally upload compiled objects in the background.
-- **Configurable**: Supports `remote_url`, `auth_token`, `timeout`, `async_upload`, and `ignore_output_path`.
-- **Minimal dependencies**: Only requires standard C libraries (OpenSSL, zstd, SQLite, curl optional).
+- Local caching of compiled objects
+- Optional remote cache support
+- Automatic cache eviction based on size/age
+- Asynchronous uploads for minimal build latency
+- Works with GCC and other compilers
+- Automated testing & benchmarking scripts included
 
 ---
 
 ## Installation
 
-1. Clone the repository:
+### Dependencies
+
+QuickCache requires:
+
+- GCC or Clang
+- `make`
+- `curl` development libraries
+- `pthread` support
+- Linux environment
+
+On Debian/Ubuntu:
 
 ```bash
-git clone https://github.com/ibrahimu8/quickcache.git
+sudo apt update
+sudo apt install build-essential libcurl4-openssl-dev
+
+Build from Source
+
+git clone git@github.com:ibrahimu8/quickcache.git
 cd quickcache
-
-2. Build QuickCache:
-
-
-
 make
 
+Optional: Run the installer script to set up helper scripts:
 
----
-
-Configuration
-
-QuickCache uses a configuration file at:
-
-~/.quickcache/config
-
-You can create an example config with:
-
-./buildcache config_create_example
-
-Example configuration:
-
-# BuildCache Configuration
-
-# Enable remote caching by setting remote_url
-# remote_url=http://quickcache-server:8080
-
-# Auth token for remote cache
-# auth_token=your-secret-token-here
-
-# Timeout in seconds for remote cache operations
-# timeout=10
-
-# Enable asynchronous uploads
-async_upload=true
-
-# Ignore output path when caching
-ignore_output_path=true
-
-ignore_output_path=true ensures that files with different output names but same content are cached consistently. This prevents human errors during builds.
-
+chmod +x install_quickcache.sh
+./install_quickcache.sh
 
 
 ---
 
 Usage
 
-Compile a source file using QuickCache:
+QuickCache works as a wrapper around your compiler:
 
-./buildcache clang myfile.c -o myprog -lm
+./buildcache <compiler> <source files> -o <output>
 
-QuickCache will check local and remote caches automatically.
+Examples
 
-If an object is found in cache, compilation is skipped.
+Compile a single file:
 
-If missing, QuickCache compiles the file, stores it in cache, and optionally uploads it remotely.
+./buildcache gcc test.c -o test
 
+Check cache stats:
 
-Examples:
+./buildcache --stats
 
-# Normal compile
-./buildcache clang real_test.c -o myprog -lm
+Clean cache entries:
 
-# Compile with debug flags
-./buildcache clang -O0 real_test.c -o test_debug -lm
+./buildcache --clean [days]
 
-# Compile with different defines
-./buildcache clang -DTEST=1 real_test.c -o testD1 -lm
+Set a maximum cache size:
 
+./buildcache --limit 100   # limit to 100 MB
 
----
+Test remote cache:
 
-How it Works
-
-1. Generates a hash of the source file and compile flags.
-
-
-2. Checks local cache for a matching object.
-
-
-3. Checks remote cache if configured.
-
-
-4. Compiles using the system compiler if cache miss.
-
-
-5. Stores the compiled object in cache and uploads remotely if enabled.
-
-
+./buildcache --test-remote
 
 
 ---
 
-Important Notes
+Automated Testing
 
-Always use -lm or other required libraries in your QuickCache compile commands.
+QuickCache comes with scripts to test and benchmark the cache:
 
-ignore_output_path=true is critical to avoid cache misses due to different output filenames.
+chmod +x test_quickcache.sh
+./test_quickcache.sh
 
-QuickCache is compatible with any compiler that supports execvp, including clang and gcc.
+You will see:
 
-Remote cache usage is optional; QuickCache works fully offline.
+Cache MISS/HIT behavior
 
+Upload to remote cache
+
+Local hits for repeated builds
+
+Automatic cleanup of old cache entries
+
+
+Benchmark script outputs timing for each build step.
 
 
 ---
 
-Contribution
+Notes
 
-Fix bugs, add new compiler support, or improve caching logic.
+The network.c fix ensures usleep works across all Linux distributions.
 
-Pull requests should maintain minimal dependencies and small binary size.
+Remote caching is optional. If disabled, QuickCache functions as a local cache only.
+
+SSH setup is recommended for pushing/pulling remote cache configurations or contributing updates to this repo.
 
 
 
 ---
 
-License
+Contributing
 
-MIT License – see LICENSE file for details.
-
-
----
-
-Summary
-
-QuickCache saves time, reduces redundant builds, and improves team productivity by caching compiled objects both locally and remotely. Proper configuration ensures reproducibility, correctness, and fewer human errors during builds.
+Pull requests and issues are welcome!
+If you fork QuickCache, please make sure to test with test_quickcache.sh and ensure local & remote caching works as expected.
 
