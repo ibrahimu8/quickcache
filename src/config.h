@@ -7,6 +7,7 @@ typedef struct {
     char auth_token[256];
     int timeout_seconds;
     int async_upload;
+    int ignore_output_path;
 } quickcache_config_t;
 
 int config_load(void);

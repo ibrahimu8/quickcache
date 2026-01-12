@@ -13,6 +13,7 @@
 #include "network.h"
 
 #define DEFAULT_CACHE_LIMIT (1024ULL * 1024 * 1024)
+#define IGNORE_OUTPUT_PATH 1   // Remove -o and its argument from cache key
 
 typedef struct {
     char *input_file;
@@ -64,16 +65,43 @@ int parse_args(int argc, char **argv, compile_info_t *info) {
     return 0;
 }
 
+
 void build_command_string(int argc, char **argv, char *buf, size_t len) {
+    const quickcache_config_t *cfg = config_get();
+    int ignore_output = cfg ? cfg->ignore_output_path : 0;
+    fprintf(stderr, "DEBUG: ignore_output=%d\n", ignore_output);
+
     buf[0] = '\0';
+    int skip_next = 0;
     for (int i = 0; i < argc; i++) {
+        if (ignore_output) {
+            if (skip_next) {
+                skip_next = 0;
+                continue;
+            }
+            if (strcmp(argv[i], "-o") == 0) {
+                skip_next = 1;
+                continue;
+            }
+        }
         strncat(buf, argv[i], len - strlen(buf) - 1);
         if (i < argc - 1) {
-            strncat(buf, " ", len - strlen(buf) - 1);
+            if (ignore_output) {
+                int next_is_minus_o = (i + 1 < argc && strcmp(argv[i + 1], "-o") == 0);
+                if (!next_is_minus_o) {
+                    strncat(buf, " ", len - strlen(buf) - 1);
+                }
+            } else {
+                strncat(buf, " ", len - strlen(buf) - 1);
+            }
         }
     }
+    // Trim possible trailing space
+    size_t buflen = strlen(buf);
+    if (buflen > 0 && buf[buflen - 1] == ' ') {
+        buf[buflen - 1] = '\0';
+    }
 }
-
 void print_usage(void) {
     printf("BuildCache - Distributed Compiler Cache\n\n");
     printf("Usage:\n");
@@ -109,20 +137,20 @@ int test_remote_connection(void) {
     }
 
     printf("Testing connection to: %s\n", cfg->remote_url);
-    
+
     // Create a test hash
     hash_t test_key;
     const char *test_data = "quickcache-test-connection";
     hash_data(test_data, strlen(test_data), test_key);
-    
+
     char hex[HASH_HEX_SIZE];
     hash_to_hex(test_key, hex);
-    
+
     printf("Test hash: %s\n", hex);
     printf("Checking if remote server is accessible...\n");
-    
+
     int exists = network_check_exists(test_key);
-    
+
     if (exists) {
         printf("✓ Remote cache is accessible and responding!\n");
     } else {
@@ -174,7 +202,7 @@ int main(int argc, char **argv) {
             return 1;
         }
         stats_print();
-        
+
         const quickcache_config_t *cfg = config_get();
         if (cfg->remote_enabled) {
             printf("\nRemote cache: ENABLED\n");
@@ -183,7 +211,7 @@ int main(int argc, char **argv) {
         } else {
             printf("\nRemote cache: DISABLED\n");
         }
-        
+
         cache_shutdown();
         metadata_close();
         return 0;
