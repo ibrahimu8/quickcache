@@ -140,4 +140,3 @@ Built specifically for the Android development community. Optimized for Termux a
 
 
 Star this repo if you find it useful for your Android builds! ⭐
-EOF
