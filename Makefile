@@ -70,3 +70,13 @@ uninstall:
 	rm -f /usr/local/bin/$(TARGET)
 
 .PHONY: all clean install uninstall
+
+.PHONY: test
+test: buildcache
+@echo "Running tests..."
+@./buildcache --help >/dev/null && echo "✓ --help works"
+@./buildcache --stats 2>/dev/null && echo "✓ --stats works"
+@echo "int main(){return 0;}" > /tmp/test_qc.c
+@./buildcache gcc -c /tmp/test_qc.c -o /tmp/test_qc.o 2>&1 | grep -q "MISS\|HIT" && echo "✓ Compilation works"
+@rm -f /tmp/test_qc.c /tmp/test_qc.o
+@echo "All tests passed!"

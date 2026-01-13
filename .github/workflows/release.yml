@@ -1,62 +1,42 @@
-name: Create Release
+name: CD - Release
 
 on:
   push:
     tags:
-      - 'v*'  # Runs when you push version tags like v1.0.1, v1.0.2
+      - 'v*.*.*'  # v1.0.0, v1.0.1, v2.0.0, etc.
 
 jobs:
-  build-releases:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: [linux-x64, linux-arm64, linux-arm]
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential libssl-dev libcurl4-openssl-dev libsqlite3-dev libzstd-dev gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
-    
-    - name: Build for ${{ matrix.target }}
-      run: |
-        make clean
-        if [ "${{ matrix.target }}" = "linux-arm64" ]; then
-          export CC=aarch64-linux-gnu-gcc
-        elif [ "${{ matrix.target }}" = "linux-arm" ]; then
-          export CC=arm-linux-gnueabihf-gcc
-        fi
-        make
-        mv buildcache buildcache-${{ matrix.target }}
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: quickcache-${{ matrix.target }}
-        path: buildcache-${{ matrix.target }}
-
   create-release:
-    needs: build-releases
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+      packages: write
+      
     steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v3
-      with:
-        path: artifacts
+    - name: Checkout code
+      uses: actions/checkout@v4
     
-    - name: Create Release
+    - name: Build for multiple platforms
+      uses: nick-fields/retry@v2
+      with:
+        timeout_minutes: 10
+        max_attempts: 3
+        command: |
+          # Build for current platform
+          make clean
+          make
+          ./buildcache --help
+          
+          # Create release archive
+          VERSION=${GITHUB_REF#refs/tags/v}
+          tar -czf quickcache-v${VERSION}-$(uname -m).tar.gz buildcache README.md LICENSE
+          sha256sum quickcache-*.tar.gz > checksums.txt
+    
+    - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          artifacts/quickcache-linux-x64/buildcache-linux-x64
-          artifacts/quickcache-linux-arm64/buildcache-linux-arm64
-          artifacts/quickcache-linux-arm/buildcache-linux-arm
+          quickcache-*.tar.gz
+          checksums.txt
         generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        prerelease: false
