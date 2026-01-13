@@ -1,0 +1,307 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <ctype.h>
+#include <openssl/evp.h>
+
+#include "hash.h"
+#include "cache.h"
+#include "exec.h"
+#include "utils.h"
+#include "stats.h"
+#include "clean.h"
+#include "metadata.h"
+#include "config.h"
+#include "network.h"
+
+#define DEFAULT_CACHE_LIMIT (1024ULL * 1024 * 1024)
+
+typedef struct {
+    char *input_file;
+    char *output_file;
+    char *compiler;
+} compile_info_t;
+
+/* ---------- USAGE ---------- */
+void print_usage(void) {
+    printf("QuickCache - Distributed Compiler Cache\n\n");
+    printf("Usage:\n");
+    printf("  quickcache <compiler> <args...>\n");
+    printf("  quickcache --stats\n");
+    printf("  quickcache --clean [days]\n");
+    printf("  quickcache --limit <size_mb>\n");
+    printf("  quickcache --config\n");
+    printf("  quickcache --test-remote\n");
+}
+
+/* ---------- CLEAN SHUTDOWN ---------- */
+static void cleanup_handler(int sig) {
+    (void)sig;
+    cache_shutdown();
+    metadata_close();
+    exit(0);
+}
+
+/* ---------- HEADER DEPENDENCY TRACKING ---------- */
+/* Parse #include directives and hash all headers recursively */
+int hash_with_dependencies(const char *source_file, hash_t out) {
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+
+    /* Hash the main source file */
+    hash_t file_hash;
+    if (hash_file(source_file, file_hash) == -1) {
+        return -1;
+    }
+    SHA256_Update(&ctx, file_hash, SHA256_DIGEST_LENGTH);
+
+    /* Open source file to find #include directives */
+    FILE *f = fopen(source_file, "r");
+    if (!f) return -1;
+
+    char line[1024];
+    char header_path[512];
+
+    while (fgets(line, sizeof(line), f)) {
+        /* Skip if not an include */
+        char *p = line;
+        while (isspace(*p)) p++;
+        if (*p != '#') continue;
+        p++;
+        while (isspace(*p)) p++;
+        if (strncmp(p, "include", 7) != 0) continue;
+        p += 7;
+        while (isspace(*p)) p++;
+
+        /* Extract header filename */
+        if (*p == '"') {
+            /* Local header: #include "header.h" */
+            p++;
+            char *end = strchr(p, '"');
+            if (!end) continue;
+            size_t len = end - p;
+            if (len >= sizeof(header_path)) continue;
+            memcpy(header_path, p, len);
+            header_path[len] = '\0';
+
+            /* Hash this header file */
+            hash_t header_hash;
+            if (hash_file(header_path, header_hash) == 0) {
+                SHA256_Update(&ctx, header_hash, SHA256_DIGEST_LENGTH);
+            }
+        }
+        /* System headers like <stdio.h> are handled by compiler flags in h_cmd */
+    }
+
+    fclose(f);
+    SHA256_Final(out, &ctx);
+    return 0;
+}
+
+/* ---------- ARGUMENT PARSING ---------- */
+int parse_args(int argc, char **argv, compile_info_t *info) {
+    info->input_file = NULL;
+    info->output_file = NULL;
+    info->compiler = argv[0];
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            info->output_file = argv[i + 1];
+            i++;
+        } else if (argv[i][0] != '-') {
+            const char *ext = strrchr(argv[i], '.');
+            if (ext && (
+                strcmp(ext, ".c") == 0  ||
+                strcmp(ext, ".cpp") == 0 ||
+                strcmp(ext, ".cc") == 0 ||
+                strcmp(ext, ".cxx") == 0)) {
+                info->input_file = argv[i];
+            }
+        }
+    }
+
+    if (!info->input_file)
+        return -1;
+
+    /* Default output file */
+    if (!info->output_file) {
+        size_t len = strlen(info->input_file) + 1;
+        char *base = malloc(len);
+        if (!base) {
+            perror("malloc");
+            exit(1);
+        }
+
+        memcpy(base, info->input_file, len);
+
+        char *dot = strrchr(base, '.');
+        if (dot) *dot = '\0';
+
+        static char default_out[256];
+        snprintf(default_out, sizeof(default_out), "%s.o", base);
+        info->output_file = default_out;
+
+        free(base);
+    }
+
+    return 0;
+}
+
+/* ---------- REMOTE TEST ---------- */
+int test_remote_connection(void) {
+    if (cache_init() == -1) {
+        fprintf(stderr, "Failed to initialize cache\n");
+        return 1;
+    }
+
+    config_load();
+    const quickcache_config_t *cfg = config_get();
+
+    if (!cfg->remote_enabled) {
+        printf("Remote cache is not enabled\n");
+        cache_shutdown();
+        metadata_close();
+        return 1;
+    }
+
+    hash_t test_key;
+    const char *msg = "quickcache-test";
+    hash_data(msg, strlen(msg), test_key);
+
+    int exists = network_check_exists(test_key);
+    printf("%s Remote cache reachable\n", exists ? "[✓]" : "[✗]");
+
+    cache_shutdown();
+    metadata_close();
+    return 0;
+}
+
+/* ---------- COMMAND STRING ---------- */
+void build_command_string(int argc, char **argv, char *buf, size_t len) {
+    const quickcache_config_t *cfg = config_get();
+    int ignore_output = cfg ? cfg->ignore_output_path : 0;
+
+    buf[0] = '\0';
+    int skip_next = 0;
+
+    for (int i = 0; i < argc; i++) {
+        if (ignore_output) {
+            if (skip_next) {
+                skip_next = 0;
+                continue;
+            }
+            if (strcmp(argv[i], "-o") == 0) {
+                skip_next = 1;
+                continue;
+            }
+        }
+
+        if (buf[0] != '\0') strncat(buf, " ", len - strlen(buf) - 1);
+        strncat(buf, argv[i], len - strlen(buf) - 1);
+    }
+}
+
+/* ---------- MAIN ---------- */
+int main(int argc, char **argv) {
+    signal(SIGINT, cleanup_handler);
+    signal(SIGTERM, cleanup_handler);
+
+    if (argc < 2) {
+        print_usage();
+        return 1;
+    }
+
+    config_load();
+
+    if (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h")) {
+        print_usage();
+        return 0;
+    }
+
+    if (!strcmp(argv[1], "--config")) {
+        cache_init();
+        int r = config_create_example();
+        cache_shutdown();
+        metadata_close();
+        return r;
+    }
+
+    if (!strcmp(argv[1], "--test-remote"))
+        return test_remote_connection();
+
+    if (!strcmp(argv[1], "--stats")) {
+        cache_init();
+        stats_print();
+        cache_shutdown();
+        metadata_close();
+        return 0;
+    }
+
+    if (!strcmp(argv[1], "--clean")) {
+        cache_init();
+        if (argc == 2)
+            cache_clean_all();
+        else
+            cache_clean_old(atoi(argv[2]));
+        cache_shutdown();
+        metadata_close();
+        return 0;
+    }
+
+    if (!strcmp(argv[1], "--limit")) {
+        if (argc < 3) {
+            fprintf(stderr, "Missing size\n");
+            return 1;
+        }
+        cache_init();
+        cache_enforce_limit((size_t)atoi(argv[2]) * 1024 * 1024);
+        cache_shutdown();
+        metadata_close();
+        return 0;
+    }
+
+    if (cache_init() == -1) {
+        fprintf(stderr, "Cache init failed\n");
+        return 1;
+    }
+
+    compile_info_t info;
+    if (parse_args(argc - 1, argv + 1, &info) == -1) {
+        int r = execute_compiler(argv + 1);
+        cache_shutdown();
+        metadata_close();
+        return r;
+    }
+
+    hash_t h_file, h_cmd, key;
+    char cmd[8192];
+
+    if (hash_with_dependencies(info.input_file, h_file) == -1) {
+        fprintf(stderr, "Hash failed\n");
+        return 1;
+    }
+
+    build_command_string(argc - 1, argv + 1, cmd, sizeof(cmd));
+    hash_data(cmd, strlen(cmd), h_cmd);
+    hash_combine(h_file, h_cmd, key);
+
+    if (cache_lookup(key, info.output_file) == 0) {
+        printf("[quickcache] HIT\n");
+        cache_shutdown();
+        metadata_close();
+        return 0;
+    }
+
+    printf("[quickcache] MISS\n");
+
+    int r = execute_compiler(argv + 1);
+    if (r == 0 && file_exists(info.output_file))
+        cache_store(key, info.output_file);
+
+    cache_enforce_limit(DEFAULT_CACHE_LIMIT);
+    cache_shutdown();
+    metadata_close();
+
+    return r;
+}
