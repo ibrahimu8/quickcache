@@ -1,0 +1,54 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libssl-dev libcurl4-openssl-dev libsqlite3-dev libzstd-dev
+    
+    - name: Build QuickCache
+      run: |
+        make clean
+        make
+    
+    - name: Run basic tests
+      run: |
+        ./buildcache --help
+        ./buildcache --stats
+        echo "int main(){return 0;}" > test.c
+        ./buildcache gcc -c test.c -o test.o
+        ./buildcache --stats
+        rm -f test.c test.o
+    
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: quickcache-binary
+        path: buildcache
+        if-no-files-found: error
+
+    - name: Run test suite
+      run: |
+        cd tests
+        ./test_basic.sh
+    
+    - name: Check code formatting
+      run: |
+        # Check for tabs instead of spaces
+        ! grep -n $'\t' src/*.c src/*.h || { echo "ERROR: Tabs found in source files"; exit 1; }
+        
+        # Check for trailing whitespace
+        ! grep -n '\s\+$' src/*.c src/*.h || { echo "ERROR: Trailing whitespace found"; exit 1; }
