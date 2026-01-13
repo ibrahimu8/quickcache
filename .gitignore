@@ -8,3 +8,13 @@ obj/
 *.cache
 *.bin
 test_*
+
+# Test binaries
+test*
+myprog*
+real_test.*
+a
+b
+c
+*.out
+*.o
