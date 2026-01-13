@@ -1,3 +1,5 @@
+QuickCache - Distributed Compiler Cache for Android
+
 QuickCache
 QuickCache is a distributed compiler cache designed to make building code faster, smarter, and more efficient. Think of it as a watchful companion for your compiler: it remembers the results of past compilations and reuses them whenever possible, saving you time and energy.
 Local cache: Stores compiled objects on your machine. If nothing has changed, QuickCache avoids recompiling, giving you near-instant builds.

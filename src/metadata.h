@@ -1,8 +1,10 @@
+#include <stdint.h>
 #ifndef METADATA_H
 #define METADATA_H
 
 #include <stddef.h>
 #include <time.h>
+#include <stdint.h>
 #include "hash.h"
 
 typedef struct {

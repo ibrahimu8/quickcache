@@ -1,6 +1,8 @@
+#include <unistd.h>
 #include "cache.h"
 #include "utils.h"
 #include "metadata.h"
+#include <unistd.h>
 #include "compress.h"
 #include "stats.h"
 #include "network.h"
