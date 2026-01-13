@@ -1,122 +1,33 @@
-# QuickCache - Distributed Compiler Cache
-
-QuickCache is a distributed compiler cache designed to speed up repeated builds by caching compiled objects locally and remotely.  
-
-Think of it like `ccache`, but with remote caching capabilities.
-
----
-
-## Features
-
-- Local caching of compiled objects
-- Optional remote cache support
-- Automatic cache eviction based on size/age
-- Asynchronous uploads for minimal build latency
-- Works with GCC and other compilers
-- Automated testing & benchmarking scripts included
-
----
-
-## Installation
-
-### Dependencies
-
-QuickCache requires:
-
-- GCC or Clang
-- `make`
-- `curl` development libraries
-- `pthread` support
-- Linux environment
-
-On Debian/Ubuntu:
-
-```bash
-sudo apt update
-sudo apt install build-essential libcurl4-openssl-dev
-
-Build from Source
-
-git clone git@github.com:ibrahimu8/quickcache.git
-cd quickcache
-make
-
-Optional: Run the installer script to set up helper scripts:
-
-chmod +x install_quickcache.sh
-./install_quickcache.sh
-
-
----
-
-Usage
-
-QuickCache works as a wrapper around your compiler:
-
+QuickCache
+QuickCache is a distributed compiler cache designed to make building code faster, smarter, and more efficient. Think of it as a watchful companion for your compiler: it remembers the results of past compilations and reuses them whenever possible, saving you time and energy.
+Local cache: Stores compiled objects on your machine. If nothing has changed, QuickCache avoids recompiling, giving you near-instant builds.
+Optional remote cache: Share compiled objects across multiple machines. Ideal for teams or multiple environments.
+Automatic management: Old or unused cache entries are evicted automatically to keep your storage clean.
+How It Works
+When you compile a source file with QuickCache, it first calculates a unique hash based on the file’s contents and compiler flags.
+It checks if this hash already exists in the local cache:
+If yes → HIT: uses the cached object file instead of compiling again.
+If no → MISS: compiles the file normally and stores the object in the cache.
+Optional remote caching can upload hits or retrieve misses from a shared server, allowing builds to be reused across machines.
+Stats are tracked to show hits, misses, hit rate, and space saved, helping you understand your build efficiency.
+How to Use QuickCache
+Basic usage:
 ./buildcache <compiler> <source files> -o <output>
+Examples:
+# Compile a single file
+./buildcache gcc ~/simple.c -o ~/test
 
-Examples
+# Compile multiple files
+./buildcache gcc ~/quickcache_test/*.c -o ~/quickcache_test/test_multi
 
-Compile a single file:
-
-./buildcache gcc test.c -o test
-
-Check cache stats:
-
+# Check cache stats
 ./buildcache --stats
 
-Clean cache entries:
+# Clean old cache entries (e.g., older than 0 days)
+./buildcache --clean 0
 
-./buildcache --clean [days]
-
-Set a maximum cache size:
-
-./buildcache --limit 100   # limit to 100 MB
-
-Test remote cache:
-
+# Test remote cache (requires configuration)
 ./buildcache --test-remote
 
-
----
-
-Automated Testing
-
-QuickCache comes with scripts to test and benchmark the cache:
-
-chmod +x test_quickcache.sh
-./test_quickcache.sh
-
-You will see:
-
-Cache MISS/HIT behavior
-
-Upload to remote cache
-
-Local hits for repeated builds
-
-Automatic cleanup of old cache entries
-
-
-Benchmark script outputs timing for each build step.
-
-
----
-
-Notes
-
-The network.c fix ensures usleep works across all Linux distributions.
-
-Remote caching is optional. If disabled, QuickCache functions as a local cache only.
-
-SSH setup is recommended for pushing/pulling remote cache configurations or contributing updates to this repo.
-
-
-
----
-
-Contributing
-
-Pull requests and issues are welcome!
-If you fork QuickCache, please make sure to test with test_quickcache.sh and ensure local & remote caching works as expected.
-
+Why QuickCache Exists
+QuickCache is not just a cache, it’s an efficient companion. It reduces redundant compilation, helps large projects build faster, and gives developers insight into their build performance. The design, architecture, and logic are entirely engineered solo, making it a reliable tool built for real-world use.
