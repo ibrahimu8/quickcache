@@ -8,7 +8,7 @@
 
 A high-performance distributed compiler cache for C/C++ projects, optimized for Android NDK development. QuickCache accelerates build times by caching compilation results locally and optionally sharing them across team members and CI/CD environments.
 
-## Features
+ Features
 
 - Instant cache hits with zero compilation time on repeated builds
 - Distributed caching to share compiled artifacts across teams and CI/CD pipelines
@@ -18,7 +18,7 @@ A high-performance distributed compiler cache for C/C++ projects, optimized for 
 - zstd compression for efficient storage
 - Automatic header dependency tracking for correct cache invalidation
 
-## How It Works
+ How It Works
 
 QuickCache wraps your compiler (gcc, clang, or NDK toolchains) and intercepts compilation commands. When you compile a file:
 
@@ -29,7 +29,7 @@ QuickCache wraps your compiler (gcc, clang, or NDK toolchains) and intercepts co
 
 This means the second time you compile the same code with the same flags, you get instant results.
 
-## Requirements
+ Requirements
 
 - Linux or Termux (Android)
 - GCC or Clang compiler
@@ -38,9 +38,9 @@ This means the second time you compile the same code with the same flags, you ge
 - libcurl
 - zstd
 
-## Installation
+ Installation
 
-### On Termux (Android)
+ On Termux (Android)
 
 ```bash
 pkg install git make clang openssl sqlite libcurl zstd
@@ -49,7 +49,7 @@ cd quickcache
 make
 ```
 
-### On Linux
+ On Linux
 
 ```bash
 # Install dependencies (Debian/Ubuntu)
@@ -67,21 +67,21 @@ make
 sudo make install
 ```
 
-## Quick Start
+ Quick Start
 
-### Basic Usage
+ Basic Usage
 
 Replace your compiler command with `./buildcache` followed by your normal compilation:
 
 ```bash
-# Instead of:
+ Instead of:
 gcc -O2 myfile.c -o myapp
 
-# Use:
+ Use:
 ./buildcache gcc -O2 myfile.c -o myapp
 ```
 
-### Android NDK Example
+ Android NDK Example
 
 ```bash
 ./buildcache aarch64-linux-android21-clang++ \
@@ -89,7 +89,7 @@ gcc -O2 myfile.c -o myapp
     -O3 jni/native.cpp -o libnative.so
 ```
 
-### Viewing Statistics
+ Viewing Statistics
 
 ```bash
 ./buildcache --stats
@@ -106,20 +106,20 @@ Data saved:     148.2 MB
 Cache age:      3.2 days
 ```
 
-### Cache Management
+ Cache Management
 
 ```bash
-# Remove entries older than 7 days
+ Remove entries older than 7 days
 ./buildcache --clean 7
 
-# Remove all cache entries
+ Remove all cache entries
 ./buildcache --clean
 
-# Enforce size limit (in MB)
+ Enforce size limit (in MB)
 ./buildcache --limit 1024
 ```
 
-## Configuration
+ Configuration
 
 QuickCache can be configured by creating `~/.quickcache/config.json`:
 
@@ -136,7 +136,7 @@ QuickCache can be configured by creating `~/.quickcache/config.json`:
 }
 ```
 
-### Configuration Options
+ Configuration Options
 
 - `cache_dir` - Where to store cached objects (default: `~/.quickcache/store`)
 - `max_size_mb` - Maximum cache size in megabytes (default: 1024)
@@ -153,7 +153,7 @@ To generate an example config file:
 ./buildcache --config
 ```
 
-## Remote Cache Setup
+ Remote Cache Setup
 
 QuickCache supports distributed caching across multiple machines. Set up a remote cache server and configure the URL in your config file. The cache will automatically:
 
@@ -167,34 +167,34 @@ Test your remote connection:
 ./buildcache --test-remote
 ```
 
-## Android NDK Integration
+ Android NDK Integration
 
 QuickCache works seamlessly with Android NDK toolchains. It supports all common ABIs:
 
 ```bash
-# ARM 64-bit
+ ARM 64-bit
 ./buildcache aarch64-linux-android-clang your_source.c
 
-# ARM 32-bit
+ ARM 32-bit
 ./buildcache armv7a-linux-androideabi-clang your_source.c
 
-# x86 64-bit
+ x86 64-bit
 ./buildcache x86_64-linux-android-clang your_source.c
 
-# x86 32-bit
+ x86 32-bit
 ./buildcache i686-linux-android-clang your_source.c
 ```
 
-### Integration with Build Systems
+ Integration with Build Systems
 
-#### With Make
+ With Make
 
 ```makefile
 CC = ./buildcache gcc
 CXX = ./buildcache g++
 ```
 
-#### With CMake
+ With CMake
 
 ```bash
 cmake -DCMAKE_C_COMPILER_LAUNCHER=./buildcache \
@@ -202,7 +202,7 @@ cmake -DCMAKE_C_COMPILER_LAUNCHER=./buildcache \
       ..
 ```
 
-#### With Gradle (Android)
+ With Gradle (Android)
 
 Add to your `build.gradle`:
 
@@ -218,7 +218,7 @@ android {
 }
 ```
 
-## How Cache Keys Work
+ How Cache Keys Work
 
 QuickCache generates cache keys by hashing:
 
@@ -232,7 +232,7 @@ This means:
 - Changing compiler flags creates a new cache entry
 - The output filename doesn't matter (unless configured otherwise)
 
-## Performance Tips
+ Performance Tips
 
 1. Enable `async_upload` to avoid blocking on remote uploads
 2. Set `ignore_output_path: true` if you frequently change output filenames
@@ -240,24 +240,24 @@ This means:
 4. Clean old cache entries periodically with `--clean 30`
 5. For CI/CD, use a shared remote cache to avoid cold starts
 
-## Known Limitations
+ Known Limitations
 
 - Only supports compilation (not linking)
 - Header tracking follows `#include` directives but not generated headers
 - Remote cache requires a compatible server implementation
 - Not suitable for preprocessor-heavy code that changes frequently
 
-## Troubleshooting
+ Troubleshooting
 
-### Cache not hitting when it should
+ Cache not hitting when it should
 
 Check if headers are being modified by build scripts:
 ```bash
-# Compare hashes
+ Compare hashes
 ./buildcache gcc -E source.c | sha256sum
 ```
 
-### Remote cache not connecting
+ Remote cache not connecting
 
 Test the connection:
 ```bash
@@ -266,7 +266,7 @@ Test the connection:
 
 Check your config file has correct `remote_url` and `auth_token`.
 
-### Running out of disk space
+ Running out of disk space
 
 Set a cache limit:
 ```bash
@@ -278,7 +278,7 @@ Or clean old entries:
 ./buildcache --clean 7  # Remove entries older than 7 days
 ```
 
-## Architecture
+ Architecture
 
 ```
 ┌─────────────────────────────────────────┐
@@ -305,7 +305,7 @@ Or clean old entries:
          └─────────────────┘
 ```
 
-## Contributing
+ Contributing
 
 Contributions are welcome. Please:
 
@@ -314,15 +314,15 @@ Contributions are welcome. Please:
 3. Add tests for new features
 4. Update documentation as needed
 
-## License
+ License
 
 MIT License. See LICENSE file for details.
 
-## Acknowledgments
+ Acknowledgments
 
 Developed for the Android development community with a focus on Termux and Android NDK workflows. Inspired by ccache and sccache but optimized for mobile and cross-compilation scenarios.
 
-## Support
+ Support
 
 For issues, questions, or feature requests, please open an issue on GitHub.
 ```
