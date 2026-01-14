@@ -4,7 +4,7 @@
 [![Build: NDK](https://img.shields.io/badge/Build-NDK-orange.svg)](https://developer.android.com/ndk)
 
 ```markdown
-# QuickCache
+ QuickCache
 
 A high-performance distributed compiler cache for C/C++ projects, optimized for Android NDK development. QuickCache accelerates build times by caching compilation results locally and optionally sharing them across team members and CI/CD environments.
 
@@ -52,18 +52,18 @@ make
  On Linux
 
 ```bash
-# Install dependencies (Debian/Ubuntu)
+ Install dependencies (Debian/Ubuntu)
 sudo apt-get install build-essential libssl-dev libsqlite3-dev libcurl4-openssl-dev libzstd-dev
 
-# Or on Fedora/RHEL
+ Or on Fedora/RHEL
 sudo dnf install gcc make openssl-devel sqlite-devel libcurl-devel libzstd-devel
 
-# Build
+ Build
 git clone https://github.com/ibrahimu8/quickcache.git
 cd quickcache
 make
 
-# Optional: Install system-wide
+ Optional: Install system-wide
 sudo make install
 ```
 
